@@ -65,7 +65,7 @@ class IntervalModel:
         return self.transform(X)
 
 
-class Quant:
+class QuantBase:
     def __init__(self, depth=6, div=4):
         assert depth >= 1
         assert div >= 1

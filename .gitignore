@@ -2,3 +2,5 @@
 .vscode
 /ideas
 data
+__pycache__
+.vscode
