@@ -7,8 +7,26 @@ ROOT_DATASET_DIR = Path(os.environ.get("DATASET_DIR", "data"))
 
 
 def list_datasets(dataset_dir: Path = ROOT_DATASET_DIR) -> list[str]:
-    """List all the dataset folders."""
-    return sorted(dataset.name for dataset in dataset_dir.iterdir() if dataset.is_dir())
+    """List only valid dataset folders."""
+    datasets = []
+
+    for dataset in dataset_dir.iterdir():
+        if not dataset.is_dir():
+            continue
+
+        # Skip hidden/system folders such as .cache
+        if dataset.name.startswith(".") or dataset.name.startswith("__"):
+            continue
+
+        # Confirm that the expected resample-0 files exist
+        train_file = dataset / f"{dataset.name}0_TRAIN.ts"
+        test_file = dataset / f"{dataset.name}0_TEST.ts"
+
+        if train_file.is_file() and test_file.is_file():
+            datasets.append(dataset.name)
+
+    return sorted(datasets)
+
 
 
 def _read_ts_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
