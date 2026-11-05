@@ -20,6 +20,9 @@ from sklearn.pipeline import make_pipeline
 from src.quant import Quant
 from src.data_loader import load_dataset, list_datasets
 
+from datetime import datetime
+import time
+
 COLUMNS = [
     "dataset",
     "resample_id",
@@ -52,8 +55,9 @@ def build_pipeline(
         ExtraTreesClassifier(
             n_estimators=n_estimators,
             max_features=max_features,
+            criterion="entropy",
             random_state=seed,
-            n_jobs=1,  # Restricts to 1 CPU core
+            n_jobs=-1,  # Uses all available CPU cores
         ),
     )
 
@@ -182,6 +186,13 @@ def run_experiments(
 
 
 def main():
+    start_datetime = datetime.now().astimezone()
+    start_time = time.perf_counter()
+
+    print("=" * 60)
+    print(f"Experiment started : {start_datetime:%Y-%m-%d %H:%M:%S %Z}")
+    print("=" * 60)
+
     p = argparse.ArgumentParser()
     p.add_argument(
         "--datasets",
@@ -224,6 +235,17 @@ def main():
         "max_features": args.max_features,
     }
     run_experiments(datasets, args.resamples, out, args.method, model_config)
+
+    end_datetime = datetime.now().astimezone()
+    end_time = time.perf_counter()
+
+    elapsed = end_time - start_time
+
+    print("\n" + "=" * 60)
+    print(f"Experiment started : {start_datetime:%Y-%m-%d %H:%M:%S %Z}")
+    print(f"Experiment ended   : {end_datetime:%Y-%m-%d %H:%M:%S %Z}")
+    print(f"Total time taken   : {elapsed:.2f} seconds")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
