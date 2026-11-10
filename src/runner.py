@@ -1,6 +1,11 @@
-import argparse
-import json
 import os
+
+for v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
+    os.environ.setdefault(v, "1")
+
+import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+import json
 from pathlib import Path
 import platform
 from time import perf_counter
@@ -17,8 +22,9 @@ from sklearn.metrics import (
 )
 from sklearn.pipeline import make_pipeline
 
+from src.improvements.quant_with_sampling_frequency import QuantWithSamplingFrequency
 from src.quant import Quant
-from src.data_loader import load_dataset, list_datasets
+from src.data_loader import ROOT_DATASET_DIR, load_dataset, list_datasets
 
 from datetime import datetime
 import time
@@ -48,6 +54,7 @@ def build_pipeline(
     div: int = 4,
     n_estimators: int = 200,
     max_features: float = 0.1,
+    n_jobs: int = 1,
 ):
     """Constructs the Quant + ExtraTreesClassifier pipeline per the paper's defaults."""
     return make_pipeline(
@@ -57,7 +64,29 @@ def build_pipeline(
             max_features=max_features,
             criterion="entropy",
             random_state=seed,
-            n_jobs=-1,  # Uses all available CPU cores
+            n_jobs=n_jobs,  # Uses all available CPU cores
+        ),
+    )
+
+
+def build_improvement_pipeline(
+    seed: int = 42,
+    depth: int = 6,
+    div: int = 4,
+    n_estimators: int = 200,
+    max_features: float = 0.1,
+    n_jobs: int = 1,
+    depth_repeats: dict[int, int] | None = {1: 2, 2: 2},
+):
+    """Constructs the Quant + ExtraTreesClassifier pipeline per the paper's defaults."""
+    return make_pipeline(
+        QuantWithSamplingFrequency(depth, div, depth_repeats=depth_repeats),
+        ExtraTreesClassifier(
+            n_estimators=n_estimators,
+            max_features=max_features,
+            criterion="entropy",
+            random_state=seed,
+            n_jobs=n_jobs,  # Uses all available CPU cores
         ),
     )
 
@@ -69,12 +98,25 @@ def hardware_string() -> str:
 
 
 def run_single_dataset(
-    dataset: str, resample_id: int, method: str, model_config: dict, hardware: str
+    dataset: str,
+    resample_id: int,
+    method: str,
+    model_config: dict,
+    hardware: str,
+    improvement: bool = False,
+    depth_repeats: dict[int, int] | None = {1: 2, 2: 2},
+    n_jobs: int = 1,
 ) -> dict:
     X_train, y_train, X_test, y_test = load_dataset(dataset, resample_id)
 
     seed = 42  # TODO: Check if seed must be fixed or not
-    model = build_pipeline(seed, **model_config)
+
+    if improvement:
+        model = build_improvement_pipeline(
+            seed, n_jobs=n_jobs, depth_repeats=depth_repeats, **model_config
+        )
+    else:
+        model = build_pipeline(seed, n_jobs=n_jobs, **model_config)
 
     # Fit the train data on the model
     t0 = perf_counter()
@@ -104,7 +146,13 @@ def run_single_dataset(
         "dataset": dataset,
         "resample_id": resample_id,
         "method": method,
-        "model_config": json.dumps(model_config, sort_keys=True),
+        "model_config": json.dumps(
+            {
+                **model_config,
+                **({"depth_repeats": depth_repeats} if improvement else {}),
+            },
+            sort_keys=True,
+        ),
         "seed": seed,
         "accuracy": accuracy,
         "balanced_accuracy": balanced_accuracy,
@@ -119,12 +167,27 @@ def run_single_dataset(
     }
 
 
+def _init_worker():
+    torch.set_num_threads(1)
+
+
+def _task(args):
+    dataset, resample_id = args[0], args[1]
+    try:
+        return run_single_dataset(*args), None
+    except Exception:
+        return None, f"{dataset} r{resample_id}\n{traceback.format_exc()}\n"
+
+
 def run_experiments(
     datasets,
     num_resamples: int = 30,
     results_file: str = "results/reproduction_results.csv",
     method: str = "quant_base",
     model_config: dict | None = None,
+    improvement: bool = False,
+    depth_repeats: dict[int, int] | None = {1: 2, 2: 2},
+    workers: int = 16,
 ):
     model_config = model_config or {}
     results_path = Path(results_file)
@@ -133,56 +196,56 @@ def run_experiments(
     hardware = hardware_string()
 
     # 1. Read the existing csv to see what is already done
-    completed_runs = set()
+    completed = set()
     if results_path.exists() and results_path.stat().st_size > 0:
-        df_existing = pd.read_csv(results_path)
-        completed_runs = set(
-            zip(
-                df_existing["dataset"],
-                df_existing["resample_id"],
-                df_existing["method"],
+        df = pd.read_csv(results_path)
+        if list(df.columns) != COLUMNS:  # old header would corrupt the file
+            raise SystemExit(
+                f"{results_path} has a different header; move it aside or use a new --out"
             )
+        completed = set(zip(df["dataset"], df["resample_id"], df["method"]))
+
+    def size(ds):  # biggest datasets first, so stragglers don't finish last
+        p = ROOT_DATASET_DIR / ds / f"{ds}0_TRAIN.ts"
+        return p.stat().st_size if p.exists() else 0
+
+    n_jobs = 1 if workers > 1 else -1
+    tasks = [
+        (ds, r, method, model_config, hardware, improvement, depth_repeats, n_jobs)
+        for ds in sorted(datasets, key=size, reverse=True)
+        for r in range(num_resamples)
+        if (ds, r, method) not in completed
+    ]
+    print(
+        f"{len(tasks)} runs to do, {len(completed)} already done, {workers} worker(s)",
+        flush=True,
+    )
+
+    def handle(row, err, i):
+        if err:
+            with open(failure_log, "a") as f:
+                f.write(err)
+            print(f"FAILED ({err.splitlines()[0]})", flush=True)
+            return
+        pd.DataFrame([row], columns=COLUMNS).to_csv(
+            results_path,
+            mode="a",
+            index=False,
+            header=not results_path.exists() or results_path.stat().st_size == 0,
+        )
+        print(
+            f"[{i}/{len(tasks)}] {row['dataset']} r{row['resample_id']}: acc={row['accuracy']:.4f}",
+            flush=True,
         )
 
-    # Warm-up run to avoid torch start up cost
-    run_single_dataset(datasets[0], 0, method, model_config, hardware)
-
-    # 2. Main execution loop
-    total = len(datasets) * num_resamples
-    done = len(completed_runs)
-
-    for dataset in datasets:
-        for resample_id in range(num_resamples):
-            # 2.1. Check if run already exists
-            if (dataset, resample_id, method) in completed_runs:
-                continue
-
-            # 2.2. Check if the run failed
-            try:
-                row = run_single_dataset(
-                    dataset, resample_id, method, model_config, hardware
-                )
-            except Exception:
-                with open(failure_log, "a") as f:
-                    f.write(f"{dataset} r{resample_id}\n{traceback.format_exc()}\n")
-                print(
-                    f"FAILED {dataset} r{resample_id} (see {failure_log})", flush=True
-                )
-                continue
-
-            # 2.3. Add the run to the results
-            pd.DataFrame([row], columns=COLUMNS).to_csv(
-                results_path,
-                mode="a",
-                header=not results_path.exists() or results_path.stat().st_size == 0,
-                index=False,
-            )
-            done += 1
-            print(
-                f"[{done}/{total}] {dataset} r{resample_id}: accuracy={row['accuracy']:.4f} "
-                f"fit={row['fit_time_s']}s pred={row['predict_time_s']}s",
-                flush=True,
-            )
+    if workers == 1:
+        for i, t in enumerate(tasks, 1):
+            handle(*_task(t), i)
+    else:
+        with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as ex:
+            futures = [ex.submit(_task, t) for t in tasks]
+            for i, fut in enumerate(as_completed(futures), 1):
+                handle(*fut.result(), i)
 
 
 def main():
@@ -194,17 +257,26 @@ def main():
     print("=" * 60)
 
     p = argparse.ArgumentParser()
+
+    def parse_repeats(s):
+        return (
+            {int(k): int(v) for k, v in (kv.split(":") for kv in s.split(","))}
+            if s
+            else None
+        )
+
     p.add_argument(
-        "--datasets",
-        nargs="*",
-        help="The datasets you wanna consider evaluating for the model. (default: all in the ROOT_DATASET_DIR)",
+        "--datasets", nargs="*", help="dataset names (default: all in data/)"
     )
+    p.add_argument("--resamples", type=int, default=30)
+    p.add_argument("--improvement", action="store_true")
     p.add_argument(
-        "--resamples",
-        type=int,
-        default=30,
-        help="The maximum number of resamples you wanna consider. (default: 30)",
+        "--repeats",
+        type=parse_repeats,
+        default="1:2,2:2",
+        help="depth:copies, e.g. 1:2,2:2,3:2",
     )
+    p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     p.add_argument(
         "--out",
         default="results/reproduction_results.csv",
@@ -234,7 +306,16 @@ def main():
         "n_estimators": args.trees,
         "max_features": args.max_features,
     }
-    run_experiments(datasets, args.resamples, out, args.method, model_config)
+    run_experiments(
+        datasets,
+        args.resamples,
+        out,
+        args.method,
+        model_config,
+        args.improvement,
+        args.repeats,
+        args.workers,
+    )
 
     end_datetime = datetime.now().astimezone()
     end_time = time.perf_counter()
@@ -252,3 +333,4 @@ if __name__ == "__main__":
     main()
 
 # python -m src.runner --datasets ItalyPowerDemand --resamples 3 --out results/smoke.csv
+# python -m src.runner --improvement --datasets ItalyPowerDemand --resamples 3 --out results/smoke.csv --method quant-sampling-frequency

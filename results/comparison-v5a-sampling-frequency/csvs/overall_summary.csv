@@ -1,0 +1,2 @@
+matched_count, my_mean_accuracy  , paper_mean_accuracy, mean_difference       , mae                 , rmse                , wins, draws, losses
+          142, 0.8551373789305813,  0.8567735140845072, -0.0016361351539256287, 0.003458218335726061, 0.016195967307914214,   31,    72,     39

@@ -1,0 +1,9 @@
+run,field,unique_values,values
+baseline,method,1,quant
+baseline,model_config,1,"{""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200}"
+baseline,seed,1,42
+baseline,hardware,1,"Intel64 Family 6 Model 183 Stepping 1, GenuineIntel | 32 cores | torch 2.14.1+cu132"
+improved,method,1,quant-sampling-frequency
+improved,model_config,1,"{""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200}"
+improved,seed,1,42
+improved,hardware,1,"Intel64 Family 6 Model 183 Stepping 1, GenuineIntel | 32 cores | torch 2.14.1+cu132"

@@ -29,7 +29,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -49,6 +48,7 @@ REQUIRED_RESULT_COLUMNS = {"dataset", "resample_id", "accuracy"}
 # ---------------------------------------------------------------------------
 # Input and validation
 # ---------------------------------------------------------------------------
+
 
 def parse_arguments():
     """Read command-line arguments."""
@@ -145,9 +145,7 @@ def validate_datasets(results):
 
         unique_resamples = group["resample_id"].nunique(dropna=True)
         if len(group) != EXPECTED_RESAMPLES:
-            reasons.append(
-                f"Expected {EXPECTED_RESAMPLES} rows, found {len(group)}"
-            )
+            reasons.append(f"Expected {EXPECTED_RESAMPLES} rows, found {len(group)}")
         if unique_resamples != EXPECTED_RESAMPLES:
             reasons.append(
                 f"Expected {EXPECTED_RESAMPLES} unique resamples, "
@@ -199,8 +197,7 @@ def load_mean_reference():
 
     if missing:
         raise ValueError(
-            "Official mean reference is missing columns: "
-            + ", ".join(sorted(missing))
+            "Official mean reference is missing columns: " + ", ".join(sorted(missing))
         )
 
     reference = reference[["dataset", "accuracy"]].copy()
@@ -245,12 +242,11 @@ def load_resample_reference():
 # Comparison calculations
 # ---------------------------------------------------------------------------
 
+
 def calculate_win_draw_loss(comparison, tolerance):
     """Add per-row difference and win/draw/loss labels."""
     comparison = comparison.copy()
-    comparison["difference"] = (
-        comparison["my_accuracy"] - comparison["paper_accuracy"]
-    )
+    comparison["difference"] = comparison["my_accuracy"] - comparison["paper_accuracy"]
     comparison["absolute_difference"] = comparison["difference"].abs()
 
     comparison["result"] = "Draw"
@@ -264,8 +260,17 @@ def summarize_comparison(comparison):
     """Calculate overall comparison metrics."""
     if comparison.empty:
         return pd.DataFrame(
-            [{"matched_count": 0, "mean_difference": None, "mae": None, "rmse": None,
-              "wins": 0, "draws": 0, "losses": 0}]
+            [
+                {
+                    "matched_count": 0,
+                    "mean_difference": None,
+                    "mae": None,
+                    "rmse": None,
+                    "wins": 0,
+                    "draws": 0,
+                    "losses": 0,
+                }
+            ]
         )
 
     difference = comparison["difference"]
@@ -288,13 +293,10 @@ def summarize_comparison(comparison):
 
 def compare_mean_results(results, tolerance):
     """Aggregate reproduction results and compare dataset means."""
-    mine = (
-        results.groupby("dataset", as_index=False)
-        .agg(
-            my_accuracy=("accuracy", "mean"),
-            my_std=("accuracy", "std"),
-            resample_count=("accuracy", "count"),
-        )
+    mine = results.groupby("dataset", as_index=False).agg(
+        my_accuracy=("accuracy", "mean"),
+        my_std=("accuracy", "std"),
+        resample_count=("accuracy", "count"),
     )
     paper = load_mean_reference()
 
@@ -335,9 +337,9 @@ def compare_resample_results(results, tolerance):
     unmatched_paper = paper_keys.merge(
         mine_keys, on=["dataset", "resample_id"], how="left", indicator=True
     )
-    unmatched_paper = unmatched_paper[
-        unmatched_paper["_merge"] == "left_only"
-    ].drop(columns="_merge")
+    unmatched_paper = unmatched_paper[unmatched_paper["_merge"] == "left_only"].drop(
+        columns="_merge"
+    )
 
     return comparison, unmatched_mine, unmatched_paper
 
@@ -367,6 +369,7 @@ def create_dataset_statistics(comparison):
 # ---------------------------------------------------------------------------
 # Output and plots
 # ---------------------------------------------------------------------------
+
 
 def save_csv(dataframe, output_dir, filename):
     """Save a dataframe to the CSV output directory."""
@@ -458,6 +461,7 @@ def create_output_directories(output_folder):
 # Main workflow
 # ---------------------------------------------------------------------------
 
+
 def print_validation_report(total_datasets, valid_results, skipped):
     """Print dataset validation results."""
     valid_count = valid_results["dataset"].nunique()
@@ -489,9 +493,7 @@ def main():
     print_validation_report(total_datasets, valid_results, skipped)
 
     if args.dataset:
-        valid_results = valid_results[
-            valid_results["dataset"] == args.dataset
-        ].copy()
+        valid_results = valid_results[valid_results["dataset"] == args.dataset].copy()
 
         if valid_results.empty:
             available = sorted(
