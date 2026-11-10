@@ -27,12 +27,30 @@ def list_datasets(dataset_dir: Path = ROOT_DATASET_DIR) -> list[str]:
 
     return sorted(datasets)
 
+    # def _read_ts_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
+    #     """Loads the .ts file and returns the train/test data."""
+    #     X, y = load_from_ts_file(path)
+    #     return X, y
 
 
 def _read_ts_file(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Loads the .ts file and returns the train/test data."""
-    X, y = load_from_ts_file(path)
-    return X, y
+    """Univariate, equal-length .ts file -> X (n, 1, length) float32, y (n,) str."""
+    X, y, in_data = [], [], False
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not in_data:
+                in_data = line.lower().startswith("@data")
+                continue
+            if not line:
+                continue
+            series, label = line.rsplit(":", 1)
+            if ":" in series:
+                raise ValueError(f"{path.name}: multivariate data not supported")
+            # parse as float64 first, then cast, so values match aeon's float32 cast exactly
+            X.append(np.array(series.split(","), dtype=np.float64).astype(np.float32))
+            y.append(label.strip())
+    return np.stack(X)[:, None, :], np.asarray(y)
 
 
 def load_dataset(
@@ -47,7 +65,7 @@ def load_dataset(
 
 def load_original(
     name: str, dataset_dir: Path = ROOT_DATASET_DIR
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Returns the train-test split for the original data of a specific dataset."""
     dataset_path = dataset_dir / name
     X_train, y_train = _read_ts_file(dataset_path / f"{name}_TRAIN.ts")

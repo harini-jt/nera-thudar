@@ -169,6 +169,7 @@ def run_single_dataset(
 
 def _init_worker():
     torch.set_num_threads(1)
+    print(f"worker {os.getpid()} ready", flush=True)
 
 
 def _task(args):
@@ -243,9 +244,13 @@ def run_experiments(
             handle(*_task(t), i)
     else:
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as ex:
-            futures = [ex.submit(_task, t) for t in tasks]
+            futures = {ex.submit(_task, t): t for t in tasks}
             for i, fut in enumerate(as_completed(futures), 1):
-                handle(*fut.result(), i)
+                try:
+                    handle(*fut.result(), i)
+                except Exception as e:
+                    t = futures[fut]
+                    handle(None, f"{t[0]} r{t[1]}\nworker crash: {e!r}\n", i)
 
 
 def main():
@@ -293,9 +298,15 @@ def main():
     p.add_argument("--max-features", type=float, default=0.1)
     p.add_argument("--shard", type=int, default=0)
     p.add_argument("--num-shards", type=int, default=1)
+    p.add_argument("--min-mb", type=float, default=0.0)
+    p.add_argument("--max-mb", type=float, default=float("inf"))
     args = p.parse_args()
 
+    def train_mb(ds):
+        return (ROOT_DATASET_DIR / ds / f"{ds}0_TRAIN.ts").stat().st_size / 1e6
+
     datasets = (args.datasets or list_datasets())[args.shard :: args.num_shards]
+    datasets = [d for d in datasets if args.min_mb <= train_mb(d) < args.max_mb]
     out = args.out
     if args.num_shards > 1:
         out = out.replace(".csv", f"_shard{args.shard}.csv")
@@ -334,3 +345,8 @@ if __name__ == "__main__":
 
 # python -m src.runner --datasets ItalyPowerDemand --resamples 3 --out results/smoke.csv
 # python -m src.runner --improvement --datasets ItalyPowerDemand --resamples 3 --out results/smoke.csv --method quant-sampling-frequency
+
+
+# python -m src.runner --improvement --repeats 1:2,2:2 --min-mb 20 --workers 1 --method dup_d1-2 --out results/comparison-v5c-sampling-frequency-parallel/improvement_results.csv
+
+# python -m src.runner --improvement --repeats 1:2,2:2 --max-mb 20 --workers 16 --method dup_d1-2 --out results/comparison-v5c-sampling-frequency-parallel/improvement_results.csv
