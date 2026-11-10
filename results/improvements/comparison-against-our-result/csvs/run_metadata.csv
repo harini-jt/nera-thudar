@@ -1,0 +1,9 @@
+run,field,unique_values,values
+baseline,method,1,quant
+baseline,model_config,1,"{""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200}"
+baseline,seed,1,42
+baseline,hardware,1,"AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD | 32 cores | torch 2.14.1+cu130"
+improved,method,1,quant
+improved,model_config,1,"{""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200}"
+improved,seed,1,42
+improved,hardware,1,"AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD | 32 cores | torch 2.14.1+cu130"
