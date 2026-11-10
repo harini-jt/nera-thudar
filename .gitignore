@@ -2,3 +2,5 @@
 .vscode
 /ideas
 *datasets*
+__pycache__
+data
