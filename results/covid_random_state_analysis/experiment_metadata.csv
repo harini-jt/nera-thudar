@@ -1,0 +1,15 @@
+,value
+rows,1001.0
+unique_seeds,1001.0
+seed_min,0.0
+seed_max,1000.0
+unique_datasets,1.0
+unique_resamples,1.0
+duplicate_dataset_resample_method_seed_rows,0.0
+missing_values_in_metrics,0.0
+best_accuracy_seed,69.0
+best_accuracy,0.7704918032786885
+worst_accuracy_seed,739.0
+worst_accuracy,0.6557377049180327
+best_log_loss_seed,857.0
+best_log_loss,0.7078900339951766
