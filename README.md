@@ -1,16 +1,13 @@
 # nera-thudar: Quant for Time series classification
 
-# Scripts to run
-
-- Testing equivalence: `python -m pytest tests -v`
-- Generating dataset stats: `python -m scripts.dataset_stats`
-- Run a sample pipeline: `python -m src.runner --datasets ItalyPowerDemand --methods quant_base dup_d1-2 --out results/smoke.csv`
-
-# QUANT Benchmark Execution & Analysis Guide
-
 This guide covers running deterministic QUANT feature extraction benchmarks across time-series datasets using `src.runner` and comparing variant performances against `quant_base` using `scripts.compare_methods`.
 
 ---
+
+## 0. Pre-requisites (IG)
+
+- Testing equivalence: `python -m pytest tests -v`
+- Generating dataset stats: `python -m scripts.dataset_stats`
 
 ## 1. Running Experiments (`python -m src.runner`)
 
