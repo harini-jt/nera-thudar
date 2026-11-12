@@ -5,6 +5,7 @@ from sklearn.pipeline import make_pipeline
 
 from src.implementations.improvements import (
     QuantWithDepthDiv,
+    QuantWithIntervalStats,
     QuantWithSamplingFrequency,
     RandomFeatureDropout,
 )
@@ -106,6 +107,22 @@ def build_sampling_frequency_dropout(
     )
 
 
+def build_interval_stats(
+    seed=42,
+    depth=6,
+    div=4,
+    n_estimators=200,
+    max_features=0.1,
+    criterion="entropy",
+    n_jobs=-1,
+):
+    """Quant with std and slope added for every interval."""
+    return make_pipeline(
+        QuantWithIntervalStats(depth=depth, div=div),
+        _forest(seed, n_estimators, max_features, criterion, n_jobs),
+    )
+
+
 # Method name (used in the CSV and on the command line) -> pipeline builder.
 PIPELINES = {
     "quant_base": build_quant,
@@ -128,6 +145,7 @@ PIPELINES = {
     "dup_d1_4_d2_2_dropout_0.2": partial(
         build_sampling_frequency_dropout, depth_repeats={1: 4, 2: 2}, dropout_rate=0.2
     ),
+    "quant_stats": build_interval_stats,
     "depth_div_m2_m8": partial(
         build_depth_div, depth_div={1: 2, 2: 2, 3: 2, 5: 8, 6: 8}
     ),
