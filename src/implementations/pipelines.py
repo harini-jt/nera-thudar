@@ -132,20 +132,15 @@ PIPELINES = {
     "dup_d1_4_d2_2": partial(build_sampling_frequency, depth_repeats={1: 4, 2: 2}),
     "random_dropout_0.1": partial(build_random_dropout, dropout_rate=0.1),
     "random_dropout_0.2": partial(build_random_dropout, dropout_rate=0.2),
-    "random_dropout_0.5": partial(build_random_dropout, dropout_rate=0.5),
     "dup_d1-2_dropout_0.1": partial(
         build_sampling_frequency_dropout, depth_repeats={1: 2, 2: 2}, dropout_rate=0.1
-    ),
-    "dup_d1-2_dropout_0.2": partial(
-        build_sampling_frequency_dropout, depth_repeats={1: 2, 2: 2}, dropout_rate=0.2
     ),
     "dup_d1_4_d2_2_dropout_0.1": partial(
         build_sampling_frequency_dropout, depth_repeats={1: 4, 2: 2}, dropout_rate=0.1
     ),
-    "dup_d1_4_d2_2_dropout_0.2": partial(
-        build_sampling_frequency_dropout, depth_repeats={1: 4, 2: 2}, dropout_rate=0.2
-    ),
     "quant_stats": build_interval_stats,
+    # More quantiles (m/2 instead of m/4) on depths 1 and 2 only.
+    "more_quantiles_d1-2": partial(build_depth_div, depth_div={1: 2, 2: 2}),
     "depth_div_m2_m8": partial(
         build_depth_div, depth_div={1: 2, 2: 2, 3: 2, 5: 8, 6: 8}
     ),
