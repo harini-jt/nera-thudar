@@ -1,0 +1,12 @@
+# Tested with Python 3.13 on macOS (Apple silicon) and Windows.
+numpy==2.3.4
+scipy==1.16.2
+pandas==2.3.3
+scikit-learn==1.7.2
+torch==2.10.0
+matplotlib==3.10.7
+aeon==1.5.0            # MiniRocket baseline and critical-difference diagrams
+numba==0.63.1
+huggingface_hub>=0.30  # dataset download
+pydantic>=2            # scripts/verify_dataset.py
+pytest>=8

@@ -46,7 +46,7 @@ def warm_up(method: str, cfg: dict) -> None:
     rng = np.random.default_rng(0)
     X = rng.standard_normal((24, 1, 64)).astype("float32")
     y = np.array(["a", "b"] * 12)
-    model = get_pipeline(method, seed=0, **cfg)
+    model = get_pipeline(method, seed=0, **{**cfg, **method_config(method)})
     model.fit(X, y)
     model.predict_proba(X)
 
@@ -61,7 +61,8 @@ def run_single(
     resample_id: int,
 ) -> dict:
     X_train, y_train, X_test, y_test = data
-    model = get_pipeline(method, seed=seed, **cfg)
+    # A method's own fixed settings (e.g. criterion="gini") take priority over command-line defaults.
+    model = get_pipeline(method, seed=seed, **{**cfg, **method_config(method)})
 
     t0 = perf_counter()
     model.fit(X_train, y_train)

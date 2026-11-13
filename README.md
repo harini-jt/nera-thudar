@@ -1,15 +1,63 @@
-# nera-thudar: Quant for Time series classification
+# nera-thudar: reproducing and extending QUANT
 
-This guide covers running deterministic QUANT feature extraction benchmarks across time-series datasets using `src.runner` and comparing variant performances against `quant_base` using `scripts.compare_methods`.
+A reproduction of *QUANT: A Minimalist Interval Method for Time Series Classification*
+(Dempster, Schmidt and Webb, Data Mining and Knowledge Discovery, 2024;
+[paper](https://doi.org/10.1007/s10618-024-01036-9), [authors' code](https://github.com/angus924/quant)),
+followed by a study of seven variants of the method.
 
----
+- Report source: [report/main.tex](report/main.tex). Tables and figures: [report/tables](report/tables), [report/figures](report/figures).
+- Per-dataset comparison with the paper: [docs/reproduction_table.md](docs/reproduction_table.md).
+- Discrepancy log: [docs/discrepancy_log.md](docs/discrepancy_log.md).
 
-## 0. Pre-requisites (IG)
+## 1. Environment setup
 
-- Testing equivalence: `python -m pytest tests -v`
-- Generating dataset stats: `python -m scripts.dataset_stats`
+Python 3.13 was used. No GPU is needed.
 
-## 1. Running Experiments (`python -m src.runner`)
+```bash
+git clone https://github.com/harini-jt/nera-thudar.git
+cd nera-thudar
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+python -m pytest -q tests          # checks our transform against the authors' quant.py
+```
+
+Run every command from the repository root.
+
+## 2. Data
+
+The experiments use 142 datasets (112 from the UCR archive and the 30 added in the
+bake-off redux), each with 30 train/test resamples stored as
+`data/<Dataset>/<Dataset><resample>_TRAIN.ts` and `..._TEST.ts`. Resample 0 is the
+original split. The full set is about 38 GB.
+
+**Option A: download the prepared copy** (Hugging Face dataset `NeraThudar/NeraThudarDS`):
+
+```bash
+hf auth login                       # only needed while the dataset repository is private
+python -m scripts.download_dataset  # writes to ./data
+```
+
+**Option B: build it from the public sources.** Download the UCR archive and the 30
+additional datasets from <https://www.timeseriesclassification.com>, then follow
+[reference/dataset_creation_steps.ipynb](reference/dataset_creation_steps.ipynb), which
+renames the folders and generates resamples 1 to 29 with
+`tsml_eval.utils.experiments.stratified_resample_data(..., random_state=resample_id)`.
+
+To keep the data somewhere else, set `DATASET_DIR`:
+
+```bash
+export DATASET_DIR=/path/to/data
+```
+
+Check the data and regenerate the dataset statistics:
+
+```bash
+python -m scripts.verify_dataset   # writes docs/data_verification.csv (142 x 30 splits)
+python -m scripts.dataset_stats    # writes docs/dataset_stats.csv
+```
+
+## 3. Runner reference (`python -m src.runner`)
 
 The runner executes feature extraction and tree fitting across specified datasets, seeds, and methods. Each evaluated method produces its own isolated CSV result file.
 
@@ -95,7 +143,7 @@ python -m src.runner \
 
 ---
 
-## 2. Comparing Methods (`python -m scripts.compare_methods`)
+## 4. Comparing Methods (`python -m scripts.compare_methods`)
 
 The comparison script aggregates per-method CSV results, calculates dataset-level performance deltas against a designated baseline, performs statistical testing (Wilcoxon signed-rank with Holm-Bonferroni correction), and exports clean Markdown summary tables and figures.
 
@@ -127,7 +175,7 @@ python -m scripts.compare_methods \
 
 ---
 
-## 3. Directory & Output Structure
+## 5. Directory & Output Structure
 
 Executing the pipeline produces the following output file organization (left buckets out of the picture):
 
@@ -153,7 +201,7 @@ results/
 
 ---
 
-## 4. End-to-End Execution Flow
+## 6. End-to-End Execution Flow
 
 ```bash
 # Step 1: Run baseline model
