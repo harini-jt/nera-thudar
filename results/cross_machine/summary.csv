@@ -1,0 +1,28 @@
+,value
+runs_matched,426
+datasets,142
+seeds,"[np.int64(7), np.int64(11), np.int64(42)]"
+identical_runs_pct,45.305164319248824
+mean_abs_diff,0.004097897095682941
+median_abs_diff,0.0007575757575757902
+p95_abs_diff,0.018032535297728636
+max_abs_diff,0.046961325966850764
+mean_net_flips,1.767605633802817
+median_net_flips,1.0
+max_net_flips,25.0
+mean_signed_diff_Windows_minus_Mac,-9.993708116877453e-05
+signed_diff_SE,0.00031460906189333056
+signed_diff_CI95_low,-0.0007119642413926483
+signed_diff_CI95_high,0.000515577812465495
+signed_diff_wilcoxon_p,0.9621186698516178
+seed_gap_Windows,0.007419585832436996
+seed_gap_Mac,0.008587327050487984
+machine_gap,0.004097897095682941
+machine_gap_over_seed_gap,0.5120159178293876
+runs_with_different_feature_count,0
+model_config_identical,True
+model_config_Windows,"{""criterion"": ""entropy"", ""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200, ""n_jobs"": -1}"
+model_config_Mac,"{""criterion"": ""entropy"", ""depth"": 6, ""div"": 4, ""max_features"": 0.1, ""n_estimators"": 200, ""n_jobs"": -1}"
+hardware_identical,
+hardware_Windows,"Intel64 Family 6 Model 183 Stepping 1, GenuineIntel | 32 cores | torch 2.14.1+cu132"
+hardware_Mac,arm | 10 cores | torch 2.10.0
