@@ -1,0 +1,2 @@
+method,metric,n_datasets,baseline_mean,improved_mean,mean_delta,median_delta,ci95_low,ci95_high,cohens_dz,improved,draw,regressed,wilcoxon_p,wilcoxon_p_holm
+quant_base,accuracy,142,0.8473126338028169,0.8456511104878982,-0.001661523314918789,0.0,-0.006959286472930158,0.002896173579722939,-0.05498204699647077,61,12,69,0.21423217590066468,0.21423217590066468
