@@ -9,6 +9,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
+# Canonical ordered list of classification and calibration metrics logged per run
 METRIC_NAMES = [
     "accuracy",
     "balanced_accuracy",
@@ -21,6 +22,8 @@ METRIC_NAMES = [
     "brier",
     "ece",
 ]
+
+# Optimization directions used by downstream ranking, aggregation, and critical-difference plots
 HIGHER_IS_BETTER = {
     "accuracy",
     "balanced_accuracy",
@@ -41,6 +44,7 @@ LOWER_IS_BETTER = {
 
 
 def _nan_on_error(fn, *args, **kwargs) -> float:
+    """Safely evaluate probability metrics that fail on small test splits with missing classes."""
     try:
         return float(fn(*args, **kwargs))
     except ValueError:  # e.g. a class is missing from the test set
@@ -49,33 +53,46 @@ def _nan_on_error(fn, *args, **kwargs) -> float:
 
 def brier_score(y_true, proba, classes) -> float:
     """Multiclass Brier score: mean over samples of the squared error summed over classes."""
+    classes = np.asarray(classes)
+    # Broadcast (N, 1) against (1, C) to build a one-hot ground-truth matrix aligned with `classes`
     onehot = (np.asarray(y_true)[:, None] == classes[None, :]).astype(float)
+    # Range is [0, 2] for multiclass probabilities (0 = perfect calibration/sharpness)
     return float(np.mean(np.sum((proba - onehot) ** 2, axis=1)))
 
 
 def expected_calibration_error(y_true, proba, classes, n_bins: int = 15) -> float:
     """Gap between confidence (max probability) and accuracy, averaged over confidence bins."""
+    classes = np.asarray(classes)
     conf = proba.max(axis=1)
     correct = (classes[proba.argmax(axis=1)] == np.asarray(y_true)).astype(float)
+
+    # Partition [0, 1] into `n_bins` equal-width confidence intervals; right=True keeps conf == 1.0 in the top bin
     edges = np.linspace(0.0, 1.0, n_bins + 1)
     bin_ids = np.clip(np.digitize(conf, edges[1:-1], right=True), 0, n_bins - 1)
+
     ece = 0.0
     for b in range(n_bins):
         mask = bin_ids == b
         if mask.any():
+            # Weight each non-empty bin's |accuracy - confidence| gap by its fraction of total samples
             ece += mask.mean() * abs(correct[mask].mean() - conf[mask].mean())
     return float(ece)
 
 
 def compute_metrics(y_true, proba, classes) -> dict:
+    """Compute hard-prediction, ranking, and probability-calibration metrics for one evaluation split."""
     y_true, classes = np.asarray(y_true), np.asarray(classes)
+    # Map argmax column indices back to the original class labels (supports string or non-contiguous labels)
     preds = classes[proba.argmax(axis=1)]
+
+    # Binary roc_auc_score expects 1D positive-class probabilities; multiclass uses macro One-vs-Rest
     if len(classes) == 2:
         auc = _nan_on_error(roc_auc_score, y_true, proba[:, 1])
     else:
         auc = _nan_on_error(
             roc_auc_score, y_true, proba, multi_class="ovr", labels=classes
         )
+
     return {
         "accuracy": float(accuracy_score(y_true, preds)),
         "balanced_accuracy": float(balanced_accuracy_score(y_true, preds)),

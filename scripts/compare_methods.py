@@ -11,6 +11,7 @@ from pathlib import Path
 
 import matplotlib
 
+# Force non-interactive backend so figure generation works on headless servers/CI
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,8 +49,10 @@ COLORS = {"improved": "tab:green", "draw": "tab:gray", "regressed": "tab:red"}
 
 # ----------------------------- Computation -----------------------------
 def compare_pair(mean, std, baseline, method, metrics, tol):
+    """Align seed-averaged per-dataset scores between `baseline` and `method` and compute deltas/outcomes."""
     b, m = mean.xs(baseline, level="method"), mean.xs(method, level="method")
     bs, ms = std.xs(baseline, level="method"), std.xs(method, level="method")
+    # Restrict comparison to the exact intersection of datasets evaluated by both methods
     common = b.index.intersection(m.index)
     print(
         f"{method}: {len(common)} datasets in common with {baseline} "
@@ -72,12 +75,14 @@ def compare_pair(mean, std, baseline, method, metrics, tol):
         f["relative_delta_pct"] = (
             100 * f["delta"] / f["baseline"].abs().replace(0, np.nan)
         )
+        # Classify each dataset as improved/draw/regressed respecting metric direction and tie tolerance
         f["outcome"] = outcome_labels(f["delta"], metric, tol)
         frames.append(f)
     return pd.concat(frames, ignore_index=True)
 
 
 def summarise(comp, n_boot, seed):
+    """Aggregate per-dataset deltas into effect sizes, bootstrap CIs, win/draw/loss counts, and Holm-adjusted p-values."""
     rows = []
     for (method, metric), g in comp.groupby(["method", "metric"], sort=False):
         d = g["delta"].to_numpy()
@@ -85,6 +90,7 @@ def summarise(comp, n_boot, seed):
         try:
             p = float(wilcoxon(d).pvalue)
         except ValueError:
+            # Wilcoxon raises ValueError if all paired differences are identically zero
             p = float("nan")
         counts = g["outcome"].value_counts()
         rows.append(
@@ -98,6 +104,7 @@ def summarise(comp, n_boot, seed):
                 "median_delta": np.median(d),
                 "ci95_low": lo,
                 "ci95_high": hi,
+                # Standardized paired effect size (Cohen's d_z) across datasets
                 "cohens_dz": (
                     d.mean() / d.std(ddof=1)
                     if len(d) > 1 and d.std(ddof=1) > 0
@@ -110,6 +117,7 @@ def summarise(comp, n_boot, seed):
             }
         )
     s = pd.DataFrame(rows)
+    # Apply Holm-Bonferroni multiple-testing correction across evaluated methods within each metric
     s["wilcoxon_p_holm"] = np.nan
     for metric, idx in s.groupby("metric").groups.items():
         s.loc[idx, "wilcoxon_p_holm"] = holm_adjust(s.loc[idx, "wilcoxon_p"].to_numpy())
@@ -117,6 +125,7 @@ def summarise(comp, n_boot, seed):
 
 
 def seed_robustness(df, baseline, methods, metrics, tol):
+    """Check whether improvements hold consistently within each individual random seed (not just seed-averaged)."""
     rows = []
     b = df[df.method == baseline].set_index(["dataset", "seed"])
     for method in methods:
@@ -144,6 +153,7 @@ def seed_robustness(df, baseline, methods, metrics, tol):
 
 
 def bucket_summary(comp, stats):
+    """Stratify performance deltas by series length and training set size regimes."""
     stats = stats.copy()
     if "length_bucket" not in stats:
         stats["length_bucket"] = bucket(
@@ -180,6 +190,7 @@ def bucket_summary(comp, stats):
 
 # ------------------------------- Figures -------------------------------
 def plot_scatter(g, method, baseline, metric, path):
+    """1:1 parity scatter plot colored by win/draw/loss outcome."""
     fig, ax = plt.subplots(figsize=(6, 6))
     for outcome, h in g.groupby("outcome"):
         ax.scatter(
@@ -219,7 +230,7 @@ def plot_deltas(g, method, metric, path):
     a2.bar(s.index, s["delta"], color=[COLORS[o] for o in s["outcome"]], width=1.0)
     a2.axhline(0, c="k", lw=1)
 
-    # Offset annotations cleanly to prevent label overlap
+    # Label the 3 largest regressions and 3 largest improvements without overlapping bars
     top_bottom_indices = list(s.index[:3]) + list(s.index[-3:])
     for idx in top_bottom_indices:
         val = s.loc[idx, "delta"]
@@ -247,12 +258,13 @@ def plot_deltas(g, method, metric, path):
 
 
 def plot_per_dataset_bar_chart(g, method, metric, path):
-    """Full vertical bar chart listing all datasets on Y-axis aligned cleanly (Ref: Image 3)."""
+    """Full horizontal bar chart listing all datasets on Y-axis aligned cleanly."""
     s = g.sort_values("delta").reset_index(drop=True)
+    # Scale figure height dynamically with dataset count so all ~142 labels remain legible
     fig_height = max(10, len(s) * 0.16)
     fig, ax = plt.subplots(figsize=(8, fig_height))
 
-    bars = ax.barh(s["dataset"], s["delta"], color="#4682b4", height=0.7)
+    ax.barh(s["dataset"], s["delta"], color="#4682b4", height=0.7)
     ax.axvline(0, ls="--", c="#2b5c8f", lw=1)
 
     ax.set_xlabel(f"Mean {metric} change ({method} - baseline)", fontsize=10)
@@ -271,6 +283,7 @@ def plot_per_dataset_bar_chart(g, method, metric, path):
 
 
 def plot_buckets(bs, method, metric, path):
+    """Grouped regime bar plots (mean delta +/- SEM) across series length and train size buckets."""
     fig, axes = plt.subplots(1, 2, figsize=(11, 4.2))
     for ax, col, order in zip(
         axes, ["length_bucket", "train_size_bucket"], [LENGTH_LABELS, TRAIN_LABELS]
@@ -291,6 +304,7 @@ def plot_buckets(bs, method, metric, path):
 
 
 def plot_forest(summary, metric, path):
+    """Forest plot comparing mean effect sizes and 95% bootstrap CIs across all evaluated methods."""
     s = summary[summary.metric == metric].reset_index(drop=True)
     if s.empty:
         return
@@ -315,12 +329,13 @@ def plot_forest(summary, metric, path):
 def generate_markdown_report(
     summary: pd.DataFrame, df: pd.DataFrame, baseline: str, resample: int, methods: list
 ) -> str:
+    """Format the statistical summary table into a GitHub-flavored Markdown report."""
     seed_counts = df.groupby("method")["seed"].nunique().to_dict()
 
     md = [
         f"# Benchmark Comparison: {', '.join(methods)} vs `{baseline}` (Resample {resample})\n",
         f"**Seeds per method:** `{seed_counts}`  ",
-        "**Notes:** $\Delta = \\text{method} - \\text{baseline}$. Metrics are direction-aware (lower is better for log loss, Brier, ECE, and fit/predict execution times).\n",
+        "**Notes:** $\\Delta = \\text{method} - \\text{baseline}$. Metrics are direction-aware (lower is better for log loss, Brier, ECE, and fit/predict execution times).\n",
         "## Summary Results\n",
     ]
 
@@ -357,6 +372,7 @@ def generate_markdown_report(
 
 # --------------------------------- Main ---------------------------------
 def main():
+    """Load result logs, compute paired statistics and regime breakdowns, and export CSVs/plots/report."""
     p = argparse.ArgumentParser(
         description="Compare multiple Quant experiment CSVs against a baseline."
     )
@@ -405,6 +421,7 @@ def main():
     metrics = [m for m in a.metrics if m in df.columns and df[m].notna().any()]
     df = df[df["method"].isin([a.baseline, *methods])]
 
+    # Collapse across random seeds first so datasets are the independent statistical units
     g = df.groupby(["dataset", "method"])
     mean, std = g[metrics].mean(), g[metrics].std(ddof=0)
     print(df.groupby("method")["seed"].nunique().rename("seeds").to_string())

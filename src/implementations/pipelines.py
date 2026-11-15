@@ -13,6 +13,7 @@ from src.implementations.quant import Quant
 
 
 def _forest(seed, n_estimators, max_features, criterion, n_jobs):
+    """Instantiate the standardized ExtraTreesClassifier head shared across all QUANT variants."""
     return ExtraTreesClassifier(
         n_estimators=n_estimators,
         max_features=max_features,
@@ -48,6 +49,7 @@ def build_sampling_frequency(
     n_jobs=-1,
     depth_repeats=None,
 ):
+    """Quant variant that duplicates shallow/coarse-depth features to boost their ExtraTrees sampling odds."""
     return make_pipeline(
         QuantWithSamplingFrequency(depth=depth, div=div, depth_repeats=depth_repeats),
         _forest(seed, n_estimators, max_features, criterion, n_jobs),
@@ -64,6 +66,7 @@ def build_depth_div(
     n_jobs=-1,
     depth_div=None,
 ):
+    """Quant variant that varies quantile density per interval depth via a custom `depth_div` map."""
     return make_pipeline(
         QuantWithDepthDiv(depth=depth, div=div, depth_div=depth_div),
         _forest(seed, n_estimators, max_features, criterion, n_jobs),
@@ -124,23 +127,29 @@ def build_interval_stats(
 
 
 # Method name (used in the CSV and on the command line) -> pipeline builder.
+# `functools.partial` binds variant-specific overrides while keeping the builder signature uniform.
 PIPELINES = {
     "quant_base": build_quant,
     "quant_gini": partial(build_quant, criterion="gini"),
+    # Coarse-interval feature duplication experiments (counteracts exponential feature growth at deeper levels)
     "dup_d1-2": partial(build_sampling_frequency, depth_repeats={1: 2, 2: 2}),
     "dup_d1-3": partial(build_sampling_frequency, depth_repeats={1: 2, 2: 2, 3: 2}),
     "dup_d1_4_d2_2": partial(build_sampling_frequency, depth_repeats={1: 4, 2: 2}),
+    # Column-subsampling / dropout regularization experiments
     "random_dropout_0.1": partial(build_random_dropout, dropout_rate=0.1),
     "random_dropout_0.2": partial(build_random_dropout, dropout_rate=0.2),
+    # Combined depth-weighting + random column dropout
     "dup_d1-2_dropout_0.1": partial(
         build_sampling_frequency_dropout, depth_repeats={1: 2, 2: 2}, dropout_rate=0.1
     ),
     "dup_d1_4_d2_2_dropout_0.1": partial(
         build_sampling_frequency_dropout, depth_repeats={1: 4, 2: 2}, dropout_rate=0.1
     ),
+    # Summary-statistic augmentation (interval standard deviation + linear slope)
     "quant_stats": build_interval_stats,
     # More quantiles (m/2 instead of m/4) on depths 1 and 2 only.
     "more_quantiles_d1-2": partial(build_depth_div, depth_div={1: 2, 2: 2}),
+    # Higher quantile resolution on coarse intervals (d1-3) and coarser resolution on fine intervals (d5-6)
     "depth_div_m2_m8": partial(
         build_depth_div, depth_div={1: 2, 2: 2, 3: 2, 5: 8, 6: 8}
     ),
@@ -148,6 +157,7 @@ PIPELINES = {
 
 
 def get_pipeline(method: str, **kwargs):
+    """Look up a registered method by name and construct its unfitted sklearn Pipeline."""
     if method not in PIPELINES:
         raise KeyError(f"Unknown method '{method}'. Available: {sorted(PIPELINES)}")
     return PIPELINES[method](**kwargs)
@@ -155,4 +165,5 @@ def get_pipeline(method: str, **kwargs):
 
 def method_config(method: str) -> dict:
     """The fixed keyword arguments a registered method was built with (for logging)."""
+    # Plain functions lack `.keywords`, returning {}; `partial` objects expose bound kwargs directly
     return dict(getattr(PIPELINES[method], "keywords", {}))

@@ -10,7 +10,9 @@ class QuantWithDepthDiv(Quant):
 
     def __init__(self, depth=6, div=4, batch_size=1024, depth_div=None):
         super().__init__(depth=depth, div=div, batch_size=batch_size)
+        # Store raw argument untouched to satisfy scikit-learn's BaseEstimator.__init__ cloning contract
         self.depth_div = depth_div
 
     def _div_for(self, depth: int) -> int:
+        """Override base divisor lookup: return depth-specific divisor if configured, else fall back to `self.div`."""
         return (self.depth_div or {}).get(depth, self.div)

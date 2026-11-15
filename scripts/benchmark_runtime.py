@@ -20,13 +20,20 @@ import sys
 import time
 from pathlib import Path
 from time import perf_counter
+from sklearn.pipeline import Pipeline, make_pipeline
 
-# Thread limits must be set before numpy/torch/numba are imported.
+# Thread limits must be set before numpy/torch/numba are imported, because BLAS/OpenMP
+# backends read these environment variables once at library initialization time.
 _threads = "1"
 if "--threads" in sys.argv:
     _threads = sys.argv[sys.argv.index("--threads") + 1]
-for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
-             "VECLIB_MAXIMUM_THREADS", "NUMBA_NUM_THREADS"):
+for _var in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMBA_NUM_THREADS",
+):
     os.environ[_var] = _threads
 
 import numpy as np  # noqa: E402
@@ -39,14 +46,32 @@ from src.implementations.pipelines import PIPELINES, get_pipeline  # noqa: E402
 from src.runner import hardware_string  # noqa: E402
 
 DEFAULT_METHODS = [
-    "quant_base", "dup_d1-2", "dup_d1_4_d2_2", "more_quantiles_d1-2",
-    "depth_div_m2_m8", "quant_stats", "random_dropout_0.1", "random_dropout_0.2",
+    "quant_base",
+    "dup_d1-2",
+    "dup_d1_4_d2_2",
+    "more_quantiles_d1-2",
+    "depth_div_m2_m8",
+    "quant_stats",
+    "random_dropout_0.1",
+    "random_dropout_0.2",
     "minirocket",
 ]
 COLUMNS = [
-    "dataset", "method", "repeat", "threads", "accuracy", "n_features",
-    "transform_train_s", "fit_s", "transform_test_s", "predict_s", "total_s",
-    "n_train", "n_test", "series_length", "hardware",
+    "dataset",
+    "method",
+    "repeat",
+    "threads",
+    "accuracy",
+    "n_features",
+    "transform_train_s",
+    "fit_s",
+    "transform_test_s",
+    "predict_s",
+    "total_s",
+    "n_train",
+    "n_test",
+    "series_length",
+    "hardware",
 ]
 
 
@@ -54,21 +79,27 @@ def subset_by_cost(n: int, stats_path="docs/dataset_stats.csv") -> list[str]:
     """Every k-th dataset when sorted by n_train * series_length, so the subset spans small to large."""
     st = pd.read_csv(stats_path)
     st = st[st.resample_id == 0].assign(cost=lambda d: d.n_train * d.series_length)
+    # Secondary sort on `dataset` breaks ties deterministically across platforms
     st = st.sort_values(["cost", "dataset"]).reset_index(drop=True)
     picks = np.linspace(0, len(st) - 1, n).round().astype(int)
     return st.loc[picks, "dataset"].tolist()
 
 
 def build(method: str, threads: int):
+    """Route method construction to QUANT variants or reference baselines, always returning a Pipeline."""
     if method in PIPELINES:
         return get_pipeline(method, seed=42, n_jobs=threads)
-    return build_baseline(method, 42, threads)
+    est = build_baseline(method, 42, threads)
+    # Wrap bare estimators (e.g., DummyClassifier for `majority`) so `pipe[:-1]` acts as a passthrough transformer
+    return est if isinstance(est, Pipeline) else make_pipeline(est)
 
 
 def time_once(method: str, threads: int, data) -> dict:
+    """Split the sklearn Pipeline into transform vs. classifier stages and time all 4 phases independently."""
     X_train, y_train, X_test, y_test = data
     X_train, X_test = as_3d(X_train), as_3d(X_test)
     pipe = build(method, threads)
+    # `pipe[:-1]` wraps all feature extraction/scaling/dropout steps; `pipe[-1]` is the final classifier
     transform, learner = pipe[:-1], pipe[-1]
 
     t0 = perf_counter()
@@ -96,15 +127,19 @@ def time_once(method: str, threads: int, data) -> dict:
 
 
 def main():
+    """Configure runtime thread pools, warm up JIT/backends, and run crash-safe timed repeats."""
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--methods", nargs="+", default=DEFAULT_METHODS)
-    p.add_argument("--datasets", nargs="*", help="names, or 'all'; default: the fixed subset")
+    p.add_argument(
+        "--datasets", nargs="*", help="names, or 'all'; default: the fixed subset"
+    )
     p.add_argument("--subset-size", type=int, default=30)
     p.add_argument("--repeats", type=int, default=3)
     p.add_argument("--threads", type=int, default=1)
     p.add_argument("--out", default="results/runtime_1core_subset.csv")
     args = p.parse_args()
 
+    # Explicitly enforce intra-op thread limits on PyTorch and Numba after import
     torch.set_num_threads(args.threads)
     try:
         import numba
@@ -122,26 +157,34 @@ def main():
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
+    # Resume support: load already-recorded (dataset, method, repeat) tuples
     done = set()
     if out.exists() and out.stat().st_size:
         prev = pd.read_csv(out)
         done = set(zip(prev.dataset, prev.method, prev.repeat))
     hardware = hardware_string()
     total = len(datasets) * len(args.methods) * args.repeats
-    print(f"{len(datasets)} datasets x {len(args.methods)} methods x {args.repeats} repeats, "
-          f"{args.threads} thread(s), {len(done)} already done", flush=True)
+    print(
+        f"{len(datasets)} datasets x {len(args.methods)} methods x {args.repeats} repeats, "
+        f"{args.threads} thread(s), {len(done)} already done",
+        flush=True,
+    )
 
-    # Warm-up: one-off costs (imports, numba compilation) are not timed.
+    # Warm-up: one-off costs (imports, numba compilation, thread pool spin-up) are not timed.
     rng = np.random.default_rng(0)
-    warm = (rng.standard_normal((24, 1, 64)).astype("float32"), np.array(["a", "b"] * 12)) * 2
+    warm = (
+        rng.standard_normal((24, 1, 64)).astype("float32"),
+        np.array(["a", "b"] * 12),
+    ) * 2
     for method in args.methods:
         time_once(method, args.threads, warm)
 
     t_start = time.perf_counter()
     count = len(done)
-    # Repeats are the outer loop, so each repeat of a method is separated in time.
+    # Repeats are the outer loop, so each repeat of a method is separated in time (mitigates thermal throttling/OS noise).
     for repeat in range(args.repeats):
         for dataset in datasets:
+            # Lazy-load dataset from disk only if at least one method still needs this repeat
             data = None
             for method in args.methods:
                 if (dataset, method, repeat) in done:
@@ -149,15 +192,26 @@ def main():
                 if data is None:
                     data = load_dataset(dataset, 0)
                 row = time_once(method, args.threads, data)
-                row.update(dataset=dataset, method=method, repeat=repeat,
-                           threads=args.threads, hardware=hardware)
+                row.update(
+                    dataset=dataset,
+                    method=method,
+                    repeat=repeat,
+                    threads=args.threads,
+                    hardware=hardware,
+                )
+                # Stream each timing row immediately to CSV so partial runs survive interruptions
                 pd.DataFrame([row], columns=COLUMNS).to_csv(
-                    out, mode="a", index=False,
+                    out,
+                    mode="a",
+                    index=False,
                     header=not out.exists() or out.stat().st_size == 0,
                 )
                 count += 1
-                print(f"[{count}/{total}] r{repeat} {dataset} {method}: "
-                      f"total={row['total_s']:.2f}s acc={row['accuracy']:.4f}", flush=True)
+                print(
+                    f"[{count}/{total}] r{repeat} {dataset} {method}: "
+                    f"total={row['total_s']:.2f}s acc={row['accuracy']:.4f}",
+                    flush=True,
+                )
     print(f"\nBenchmark wall time: {time.perf_counter() - t_start:.1f}s", flush=True)
 
 

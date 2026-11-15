@@ -31,13 +31,16 @@ from src.data_loader import list_datasets, load_dataset
 from src.metrics import compute_metrics
 from src.runner import COLUMNS, hardware_string, load_completed, resolve_out_path
 
+# Probability-dependent metrics masked to NaN for classifiers without calibrated probability outputs
 PROBABILITY_METRICS = ["log_loss", "auc", "brier", "ece"]
 
 
 def build(method: str, seed: int, n_jobs: int):
+    """Instantiate the requested reference baseline estimator or pipeline."""
     if method == "majority":
         return DummyClassifier(strategy="prior")
     if method == "minirocket":
+        # Lazy import so `majority` runs without triggering aeon/numba initialization
         from aeon.transformations.collection.convolution_based import MiniRocket
 
         return make_pipeline(
@@ -49,15 +52,18 @@ def build(method: str, seed: int, n_jobs: int):
 
 
 def as_3d(X):
+    """Coerce 2D (N, L) or 3D (N, C, L) inputs into contiguous float32 3D arrays expected by aeon."""
     X = np.asarray(X, dtype=np.float32)
     return X[:, None, :] if X.ndim == 2 else X
 
 
 def run_single(data, method, seed, n_jobs, hardware, dataset, resample_id) -> dict:
+    """Fit and evaluate one baseline run, returning a row matching `src.runner.COLUMNS`."""
     X_train, y_train, X_test, y_test = data
     X_train, X_test = as_3d(X_train), as_3d(X_test)
     model = build(method, seed, n_jobs)
 
+    # DummyClassifier ignores X values, so slice a single column to avoid passing full 3D series
     t0 = perf_counter()
     model.fit(X_train if method != "majority" else X_train[:, 0, :1], y_train)
     fit_time = perf_counter() - t0
@@ -66,12 +72,14 @@ def run_single(data, method, seed, n_jobs, hardware, dataset, resample_id) -> di
     if method == "majority":
         proba = model.predict_proba(X_test[:, 0, :1])
     else:
+        # RidgeClassifierCV lacks predict_proba; one-hot encode hard predictions to satisfy `compute_metrics`
         preds = model.predict(X_test)
         proba = (preds[:, None] == model.classes_[None, :]).astype(float)
     predict_time = perf_counter() - t0
 
     metrics = compute_metrics(y_test, proba, model.classes_)
     if method != "majority":
+        # Overwrite probability metrics derived from one-hot hard predictions with NaN
         metrics.update({m: float("nan") for m in PROBABILITY_METRICS})
         n_features = int(model[-1].n_features_in_)
     else:
@@ -97,6 +105,7 @@ def run_single(data, method, seed, n_jobs, hardware, dataset, resample_id) -> di
 
 
 def main():
+    """Parse CLI arguments and run checkpointed baseline sweeps across all target datasets."""
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--methods", nargs="+", default=["majority", "minirocket"])
     p.add_argument("--datasets", nargs="*", help="default: every dataset directory")
@@ -115,25 +124,42 @@ def main():
         out_file.parent.mkdir(parents=True, exist_ok=True)
         failure_log = out_file.with_suffix(".failures.log")
         completed = load_completed(out_file)
+
         # The majority baseline has no randomness, so one row per dataset is enough.
         seeds = [0] if method == "majority" else args.seeds
         total, done = len(datasets) * len(seeds), len(completed)
-        print(f"\n--- [{method}] {total} runs planned, {done} already done in {out_file} ---", flush=True)
+        print(
+            f"\n--- [{method}] {total} runs planned, {done} already done in {out_file} ---",
+            flush=True,
+        )
 
+        # Trigger Numba JIT compilation on a throwaway batch so first-dataset timing isn't skewed
         if method == "minirocket":  # numba compilation, not counted as runtime
             rng = np.random.default_rng(0)
             build(method, 0, args.n_jobs).fit(
-                rng.standard_normal((24, 1, 64)).astype("float32"), np.array(["a", "b"] * 12)
+                rng.standard_normal((24, 1, 64)).astype("float32"),
+                np.array(["a", "b"] * 12),
             )
 
         for dataset in datasets:
-            todo = [s for s in seeds if (dataset, args.resample, method, s) not in completed]
+            todo = [
+                s for s in seeds if (dataset, args.resample, method, s) not in completed
+            ]
             if not todo:
                 continue
             try:
                 data = load_dataset(dataset, args.resample)
                 for seed in todo:
-                    row = run_single(data, method, seed, args.n_jobs, hardware, dataset, args.resample)
+                    row = run_single(
+                        data,
+                        method,
+                        seed,
+                        args.n_jobs,
+                        hardware,
+                        dataset,
+                        args.resample,
+                    )
+                    # Stream each completed row directly to CSV for crash-safe resumption
                     pd.DataFrame([row], columns=COLUMNS).to_csv(
                         out_file,
                         mode="a",
@@ -147,6 +173,7 @@ def main():
                         flush=True,
                     )
             except Exception:
+                # Isolate dataset/runtime errors and record full traceback without halting remaining datasets
                 with open(failure_log, "a") as f:
                     f.write(f"{dataset} {method}\n{traceback.format_exc()}\n")
                 print(f"FAILED {dataset} {method}", flush=True)
